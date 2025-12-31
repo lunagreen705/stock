@@ -1,5 +1,5 @@
 {
-  "name": "TWStock AI Trend Scout (Node.js CLI)",
-  "description": "A Node.js automation script that uses Gemini 3 with Search Grounding to analyze Taiwan stock market trends and sends a daily HTML email report via Gmail.",
+  "name": "TWStock AI Trend Scout (Web)",
+  "description": "A React Web Application that uses Gemini 3 with Search Grounding to analyze Taiwan stock market trends.",
   "requestFramePermissions": []
 }
