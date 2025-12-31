@@ -1,314 +1,137 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { GoogleGenAI, Type } from "@google/genai";
-import { TrendingUp, TrendingDown, Search, Mail, Copy, Loader2, AlertCircle } from 'lucide-react';
+import React, { useState } from 'react';
+import { analyzeMarket } from './services/geminiService';
+import { AnalysisReport, AnalysisStatus } from './types';
+import StockCard from './components/StockCard';
+import GmailGenerator from './components/GmailGenerator';
 
-// --- Types ---
-interface StockRecommendation {
-  code: string;
-  name: string;
-  price: string;
-  sector: string;
-  reason: string;
-  technicalSignal: string;
-  chipSignal: string;
-  riskLevel: 'High' | 'Medium' | 'Low';
-}
-
-interface AnalysisReport {
-  date: string;
-  marketSentiment: string;
-  stocks: StockRecommendation[];
-  sources: string[];
-}
-
-// --- API Client ---
-// Ensure API Key is available
-const apiKey = process.env.API_KEY;
-const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
-
-// --- Styles (Inline for simplicity) ---
-const styles = {
-  container: { maxWidth: '1000px', margin: '0 auto', padding: '20px' },
-  header: { textAlign: 'center' as const, marginBottom: '40px' },
-  title: { fontSize: '2.5rem', fontWeight: 'bold', color: '#1e3a8a', marginBottom: '10px' },
-  subtitle: { color: '#64748b' },
-  buttonPrimary: {
-    backgroundColor: '#2563eb', color: 'white', padding: '12px 24px', borderRadius: '8px',
-    border: 'none', cursor: 'pointer', fontSize: '1rem', display: 'flex', alignItems: 'center', gap: '8px',
-    margin: '0 auto', transition: 'background 0.3s'
-  },
-  card: { backgroundColor: 'white', borderRadius: '12px', padding: '20px', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' },
-  grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '20px', marginTop: '30px' },
-  badge: (risk: string) => ({
-    padding: '4px 8px', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 'bold',
-    backgroundColor: risk === 'High' ? '#fee2e2' : risk === 'Medium' ? '#fef3c7' : '#dcfce7',
-    color: risk === 'High' ? '#991b1b' : risk === 'Medium' ? '#92400e' : '#166534'
-  }),
-  sectionTitle: { fontSize: '1.5rem', fontWeight: 'bold', color: '#334155', marginBottom: '15px', borderLeft: '5px solid #2563eb', paddingLeft: '10px' },
-  sourceLink: { display: 'block', color: '#2563eb', textDecoration: 'none', marginBottom: '5px', fontSize: '0.9rem', whiteSpace: 'nowrap' as const, overflow: 'hidden' as const, textOverflow: 'ellipsis' as const },
-  toolbar: { display: 'flex', gap: '10px', justifyContent: 'center', marginTop: '40px' },
-  secondaryBtn: {
-    backgroundColor: 'white', border: '1px solid #cbd5e1', color: '#475569', padding: '10px 20px',
-    borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px'
-  }
-};
-
-export default function App() {
-  const [loading, setLoading] = useState(false);
+const App: React.FC = () => {
+  const [status, setStatus] = useState<AnalysisStatus>(AnalysisStatus.IDLE);
   const [report, setReport] = useState<AnalysisReport | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const hasRun = useRef(false);
+  const [errorMsg, setErrorMsg] = useState<string>('');
 
-  const analyzeMarket = async () => {
-    if (!ai) {
-      setError("API Key 尚未設定。請在 Render 環境變數中設定 API_KEY。");
-      return;
-    }
-
-    setLoading(true);
-    setError(null);
-    setReport(null);
-
+  const handleAnalysis = async () => {
+    setStatus(AnalysisStatus.ANALYZING);
+    setErrorMsg('');
     try {
-      const modelId = "gemini-3-pro-preview"; // Using Pro for better reasoning
-      const systemInstruction = `
-        You are an expert Taiwan Stock Market Analyst.
-        Identify 10 promising stocks based on technical (moving averages, MACD) and chip analysis (institutional buying) from the last 3 months.
-        You MUST use the 'googleSearch' tool to find the most recent market data.
-        Strictly Output JSON.
-        Use Traditional Chinese.
-      `;
-
-      const prompt = `
-        請搜尋台灣股市最近三個月的熱門股票資訊。
-        請幫我篩選出 10 檔「技術面強勢」或「籌碼面優良」的潛力上漲股票。
-        
-        對於每一檔股票，請提供：
-        1. code (股票代號)
-        2. name (股票名稱)
-        3. price (近期參考價格)
-        4. sector (產業類別)
-        5. reason (看好理由 - 詳細說明技術或籌碼面依據)
-        6. technicalSignal (主要技術指標訊號)
-        7. chipSignal (主要籌碼訊號)
-        8. riskLevel (High/Medium/Low)
-
-        同時，請總結一段目前的大盤市場情緒 (marketSentiment)。
-      `;
-
-      const response = await ai.models.generateContent({
-        model: modelId,
-        contents: prompt,
-        config: {
-          systemInstruction: systemInstruction,
-          tools: [{ googleSearch: {} }],
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              marketSentiment: { type: Type.STRING },
-              stocks: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    code: { type: Type.STRING },
-                    name: { type: Type.STRING },
-                    price: { type: Type.STRING },
-                    sector: { type: Type.STRING },
-                    reason: { type: Type.STRING },
-                    technicalSignal: { type: Type.STRING },
-                    chipSignal: { type: Type.STRING },
-                    riskLevel: { type: Type.STRING, enum: ["High", "Medium", "Low"] },
-                  },
-                  required: ["code", "name", "price", "reason", "technicalSignal", "chipSignal"],
-                },
-              },
-            },
-            required: ["marketSentiment", "stocks"],
-          },
-        },
-      });
-
-      if (response.text) {
-        const data = JSON.parse(response.text);
-        
-        // Extract sources from grounding metadata
-        const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
-        const sources: string[] = [];
-        groundingChunks.forEach((chunk: any) => {
-          if (chunk.web?.uri) sources.push(chunk.web.uri);
-        });
-
-        setReport({
-          date: new Date().toLocaleDateString('zh-TW'),
-          marketSentiment: data.marketSentiment,
-          stocks: data.stocks,
-          sources: Array.from(new Set(sources)),
-        });
-      } else {
-        throw new Error("No analysis generated.");
-      }
-
-    } catch (err: any) {
-      console.error(err);
-      setError(err.message || "Analysis failed. Please try again.");
-    } finally {
-      setLoading(false);
+      const result = await analyzeMarket();
+      setReport(result);
+      setStatus(AnalysisStatus.COMPLETE);
+    } catch (e: any) {
+      console.error(e);
+      setStatus(AnalysisStatus.ERROR);
+      setErrorMsg(e.message || "分析過程中發生錯誤，請檢查 API Key 或稍後再試。");
     }
-  };
-
-  // Automatically run analysis on mount
-  useEffect(() => {
-    if (!hasRun.current) {
-      hasRun.current = true;
-      analyzeMarket();
-    }
-  }, []);
-
-  const generateEmailDraft = () => {
-    if (!report) return;
-    const subject = encodeURIComponent(`[AI日報] 台股趨勢分析 - ${report.date}`);
-    
-    // Simple plain text body for mailto
-    const bodyText = `
-日期: ${report.date}
-市場情緒: ${report.marketSentiment}
-
-【精選個股】
-${report.stocks.map(s => `
-${s.code} ${s.name} (${s.price})
-訊號: ${s.technicalSignal} | ${s.chipSignal}
-理由: ${s.reason}
-風險: ${s.riskLevel}
-`).join('-------------------')}
-
-來源: Gemini AI Search
-    `.trim();
-
-    const body = encodeURIComponent(bodyText);
-    window.location.href = `mailto:?subject=${subject}&body=${body}`;
-  };
-
-  const copyToClipboard = () => {
-    if (!report) return;
-    const htmlContent = `
-      <h2>台股分析報告 (${report.date})</h2>
-      <p><strong>市場情緒：</strong>${report.marketSentiment}</p>
-      <hr/>
-      ${report.stocks.map(s => `
-        <p><strong>${s.code} ${s.name}</strong> - ${s.price}</p>
-        <p>理由：${s.reason}</p>
-        <p>訊號：${s.technicalSignal} / ${s.chipSignal}</p>
-      `).join('<br/>')}
-    `;
-    
-    // Copy plain text actually works better for most chats, but let's try to be smart
-    const textContent = `【台股 AI 日報 ${report.date}】\n\n${report.marketSentiment}\n\n` + 
-      report.stocks.map(s => `🔹 ${s.code} ${s.name} $${s.price}\n   訊號：${s.technicalSignal}\n   分析：${s.reason}`).join('\n\n');
-
-    navigator.clipboard.writeText(textContent).then(() => alert("報告已複製到剪貼簿！"));
   };
 
   return (
-    <div style={styles.container}>
-      <header style={styles.header}>
-        <h1 style={styles.title}>TWStock AI Trend Scout</h1>
-        <p style={styles.subtitle}>Web Edition • Powered by Gemini 3 Pro & Google Search</p>
-      </header>
-
-      {!report && !loading && !error && (
-        <div style={{ textAlign: 'center', padding: '50px 20px' }}>
-             <p style={{ color: '#64748b' }}>準備開始自動分析...</p>
-        </div>
-      )}
-
-      {loading && (
-        <div style={{ textAlign: 'center', padding: '50px' }}>
-          <Loader2 style={{ animation: 'spin 1s linear infinite', color: '#2563eb', margin: '0 auto 20px' }} size={48} />
-          <p style={{ color: '#64748b', fontSize: '1.2rem' }}>正在掃描全台股市場數據...</p>
-          <p style={{ color: '#94a3b8', fontSize: '0.9rem' }}>分析技術指標、計算籌碼集中度、搜尋最新新聞...</p>
-        </div>
-      )}
-
-      {error && (
-        <div style={{ padding: '20px', backgroundColor: '#fee2e2', color: '#991b1b', borderRadius: '8px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px', textAlign: 'center' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-             <AlertCircle />
-             <strong>分析發生錯誤</strong>
-          </div>
-          <div>{error}</div>
-          <button onClick={analyzeMarket} style={{ ...styles.buttonPrimary, marginTop: '10px' }}>
-             重試
-          </button>
-        </div>
-      )}
-
-      {report && (
-        <div>
-          <div style={styles.card}>
-            <h2 style={styles.sectionTitle}>📊 市場情緒總結</h2>
-            <p style={{ lineHeight: '1.6', fontSize: '1.1rem' }}>{report.marketSentiment}</p>
-          </div>
-
-          <div style={styles.grid}>
-            {report.stocks.map((stock) => (
-              <div key={stock.code} style={styles.card}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '10px' }}>
-                  <div>
-                    <h3 style={{ margin: 0, fontSize: '1.3rem' }}>{stock.name} <span style={{ color: '#64748b', fontSize: '0.9rem' }}>{stock.code}</span></h3>
-                    <span style={{ fontSize: '0.9rem', color: '#64748b' }}>{stock.sector}</span>
-                  </div>
-                  <span style={styles.badge(stock.riskLevel)}>{stock.riskLevel} Risk</span>
-                </div>
-                
-                <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#dc2626', marginBottom: '15px' }}>
-                  {stock.price}
-                </div>
-
-                <div style={{ marginBottom: '15px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '5px', color: '#059669', fontSize: '0.9rem', fontWeight: 'bold', marginBottom: '5px' }}>
-                    <TrendingUp size={16} />
-                    {stock.technicalSignal}
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '5px', color: '#d97706', fontSize: '0.9rem', fontWeight: 'bold' }}>
-                    <TrendingDown size={16} /> {/* Using TrendingDown icon just as a placeholder for chips */}
-                    {stock.chipSignal}
-                  </div>
-                </div>
-
-                <p style={{ color: '#334155', fontSize: '0.95rem', lineHeight: '1.5' }}>{stock.reason}</p>
-              </div>
-            ))}
-          </div>
-
-          <div style={styles.toolbar}>
-            <button onClick={generateEmailDraft} style={styles.secondaryBtn}>
-              <Mail size={18} />
-              開啟 Gmail 草稿
-            </button>
-            <button onClick={copyToClipboard} style={styles.secondaryBtn}>
-              <Copy size={18} />
-              複製文字報告
-            </button>
-             <button onClick={analyzeMarket} style={styles.secondaryBtn}>
-              <Search size={18} />
-              重新分析
-            </button>
-          </div>
-
-          <div style={{ marginTop: '40px', padding: '20px', borderTop: '1px solid #e2e8f0' }}>
-            <h4 style={{ color: '#64748b' }}>資料來源 (AI Grounding)</h4>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
-              {report.sources.map((src, i) => (
-                <a key={i} href={src} target="_blank" rel="noopener noreferrer" style={styles.sourceLink}>
-                  [{i + 1}] {new URL(src).hostname}
-                </a>
-              ))}
+    <div className="min-h-screen bg-slate-900 text-slate-200 pb-20">
+      {/* Header */}
+      <header className="bg-slate-950 border-b border-slate-800 sticky top-0 z-50">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="bg-gradient-to-br from-primary-600 to-purple-600 h-10 w-10 rounded-xl flex items-center justify-center shadow-lg shadow-primary-500/20">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6 text-white">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3v11.25A2.25 2.25 0 006 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0118 16.5h-2.25m-7.5 0h7.5m-7.5 0l-1 3m8.5-3l1 3m0 0l.5 1.5m-.5-1.5h-9.5m0 0l-.5 1.5m.75-9l3-3 2.148 2.148A12.061 12.061 0 0116.5 7.605" />
+              </svg>
+            </div>
+            <div>
+              <h1 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-slate-400">
+                TWStock AI 趨勢獵手
+              </h1>
+              <p className="text-xs text-slate-500">Gemini 3 Pro + Search Grounding</p>
             </div>
           </div>
+          
+          <div className="flex items-center gap-4">
+             {status === AnalysisStatus.COMPLETE && (
+               <button 
+                 onClick={() => { setStatus(AnalysisStatus.IDLE); setReport(null); }}
+                 className="text-sm text-slate-400 hover:text-white transition-colors"
+               >
+                 清除結果
+               </button>
+             )}
+          </div>
         </div>
-      )}
+      </header>
+
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
+        
+        {/* Intro / Call to Action */}
+        <div className="text-center max-w-2xl mx-auto mb-12">
+          <h2 className="text-3xl sm:text-4xl font-bold text-white mb-4">
+            AI 驅動的台股選股助理
+          </h2>
+          <p className="text-slate-400 mb-8 text-lg">
+            利用 Gemini 的強大推論能力，結合即時網路搜尋，分析近期三個月的技術指標與籌碼動向，自動篩選 10 檔潛力股並生成日報。
+          </p>
+          
+          {status === AnalysisStatus.IDLE && (
+            <button
+              onClick={handleAnalysis}
+              className="group relative inline-flex items-center justify-center px-8 py-4 font-bold text-white transition-all duration-200 bg-primary-600 font-lg rounded-full hover:bg-primary-500 hover:shadow-lg hover:shadow-primary-500/40 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-600 focus:ring-offset-slate-900"
+            >
+              <span className="mr-2">開始全市場分析</span>
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5 group-hover:translate-x-1 transition-transform">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
+              </svg>
+            </button>
+          )}
+
+          {status === AnalysisStatus.ANALYZING && (
+            <div className="flex flex-col items-center">
+              <div className="relative w-20 h-20 mb-4">
+                <div className="absolute top-0 left-0 w-full h-full border-4 border-slate-700 rounded-full"></div>
+                <div className="absolute top-0 left-0 w-full h-full border-4 border-primary-500 rounded-full animate-spin border-t-transparent"></div>
+              </div>
+              <p className="text-primary-400 animate-pulse font-medium">正在掃描台股市場資訊 (Search Grounding)...</p>
+              <p className="text-xs text-slate-500 mt-2">這可能需要 15-30 秒</p>
+            </div>
+          )}
+
+          {status === AnalysisStatus.ERROR && (
+             <div className="bg-red-900/20 border border-red-500/50 text-red-200 p-4 rounded-lg mt-4">
+                <p className="font-bold">發生錯誤</p>
+                <p className="text-sm">{errorMsg}</p>
+                <button onClick={handleAnalysis} className="mt-3 bg-red-800 hover:bg-red-700 px-4 py-1 rounded text-sm transition-colors">重試</button>
+             </div>
+          )}
+        </div>
+
+        {/* Results */}
+        {status === AnalysisStatus.COMPLETE && report && (
+          <div className="animate-fade-in-up">
+            
+            {/* Market Sentiment Bar */}
+            <div className="bg-slate-800/50 border border-slate-700 rounded-2xl p-6 mb-10 backdrop-blur-sm">
+              <h3 className="text-slate-400 text-sm font-bold uppercase tracking-wider mb-2">市場情緒總結</h3>
+              <p className="text-xl text-white leading-relaxed font-light">
+                {report.marketSentiment}
+              </p>
+              <div className="mt-4 flex gap-2 overflow-x-auto pb-2">
+                 {report.sources.map((source, i) => (
+                   <a key={i} href={source} target="_blank" rel="noreferrer" className="text-xs bg-slate-900 text-slate-500 px-3 py-1 rounded-full border border-slate-700 hover:text-primary-400 hover:border-primary-500 transition-colors truncate max-w-[200px]">
+                     參考來源 {i+1}
+                   </a>
+                 ))}
+              </div>
+            </div>
+
+            {/* Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-12">
+              {report.stocks.map((stock, index) => (
+                <StockCard key={stock.code} stock={stock} index={index} />
+              ))}
+            </div>
+
+            {/* Email Section */}
+            <GmailGenerator report={report} />
+
+          </div>
+        )}
+      </main>
     </div>
   );
-}
+};
+
+export default App;
