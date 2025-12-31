@@ -1,5 +1,5 @@
 {
-  "name": "TWStock AI Trend Scout",
-  "description": "An AI-powered dashboard that analyzes Taiwan stock market trends using Gemini 3 with Google Search Grounding to identify potential high-growth stocks based on technical and chip indicators, generating daily email reports.",
+  "name": "TWStock AI Trend Scout (Node.js CLI)",
+  "description": "A Node.js automation script that uses Gemini 3 with Search Grounding to analyze Taiwan stock market trends and sends a daily HTML email report via Gmail.",
   "requestFramePermissions": []
 }
